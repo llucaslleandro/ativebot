@@ -1,0 +1,16 @@
+node_modules/
+npm-debug.log*
+
+.env
+.env.*
+!.env.example
+
+src/data/clientes.json
+
+github_actions_ativebot*
+*.pem
+*.key
+.ssh/
+
+.DS_Store
+Thumbs.db
