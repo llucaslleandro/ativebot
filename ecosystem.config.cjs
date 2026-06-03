@@ -9,7 +9,7 @@ module.exports = {
       max_memory_restart: '300M',
       env: {
         NODE_ENV: 'production',
-        CLIENTES_DATA_PATH: '/var/lib/ativebot/clientes.json',
+        CLIENTES_DATA_PATH: '/home/ativebot/data/clientes.json',
       },
     },
   ],

@@ -1,45 +1,58 @@
 # Deploy no GitHub + VPS + GitHub Actions
 
-Este projeto e um bot Discord em Node.js. Ele nao precisa de build: em producao ele roda com `node src/index.js`.
+Este guia esta ajustado para o contexto atual:
 
-O fluxo recomendado e:
+- VPS acessada como `root`.
+- Projeto instalado em `/home/ativebot`.
+- Dados locais existentes em `src/data/clientes.json`.
+- Dados de producao persistentes em `/home/ativebot/data/clientes.json`.
+- Bot rodando com PM2.
+- Deploy automatico pelo GitHub Actions a cada push na branch `main`.
 
-1. O codigo fica no GitHub.
-2. A VPS roda o bot com PM2.
-3. O arquivo `.env` fica somente na VPS.
-4. O arquivo de dados `clientes.json` fica fora do repositorio, em uma pasta persistente da VPS.
-5. A cada push na branch `main`, o GitHub Actions acessa a VPS por SSH, atualiza o codigo e reinicia o bot.
+O ponto mais importante: o arquivo de dados nao deve ficar dentro da pasta do repositorio em producao. O deploy usa `git reset --hard`, entao os dados precisam ficar fora do codigo versionado.
 
-## 1. Arquivos importantes adicionados
+## 1. O que ja foi preparado no projeto
 
-- `.gitignore`: impede subir `node_modules`, `.env` e `src/data/clientes.json`.
-- `ecosystem.config.cjs`: configuracao do PM2 para manter o bot online.
+Estes arquivos ja existem no projeto:
+
+- `.gitignore`: impede subir `.env`, `node_modules`, chaves SSH e `src/data/clientes.json`.
 - `.github/workflows/deploy.yml`: workflow de deploy automatico por SSH.
-- `.env.example`: modelo das variaveis de ambiente.
+- `ecosystem.config.cjs`: configuracao do PM2.
+- `.env.example`: modelo das variaveis.
+- `src/services/clientesService.js`: aceita `CLIENTES_DATA_PATH`.
 
-## 2. Preparar o repositorio local
+O caminho configurado para os dados em producao e:
 
-Na pasta do projeto:
-
-```bash
-git init
-git branch -M main
-git add .
-git status
-git commit -m "Initial deploy setup"
+```text
+/home/ativebot/data/clientes.json
 ```
 
-Confirme no `git status` que estes arquivos NAO aparecem para commit:
+## 2. Preparar o Git local
+
+Na sua maquina local, dentro da pasta do projeto:
+
+```bash
+git status
+git add .
+git status
+git commit -m "Configure VPS deploy"
+```
+
+Antes do commit, confira que estes arquivos nao aparecem no `git status`:
 
 - `.env`
 - `node_modules/`
 - `src/data/clientes.json`
+- `github_actions_ativebot`
+- `github_actions_ativebot.pub`
+
+Se algum deles aparecer, pare e revise o `.gitignore`.
 
 ## 3. Criar o repositorio no GitHub
 
 Crie um repositorio vazio no GitHub, sem README inicial.
 
-Depois conecte o remoto local:
+Depois, na sua maquina local, conecte o remoto:
 
 ```bash
 git remote add origin git@github.com:SEU_USUARIO/ativebot_discord.git
@@ -55,49 +68,94 @@ git push -u origin main
 
 ## 4. Preparar a VPS
 
-Os comandos abaixo assumem Ubuntu/Debian.
-
 Entre na VPS:
 
 ```bash
-ssh usuario@IP_DA_VPS
+ssh root@IP_DA_VPS
 ```
 
 Atualize pacotes:
 
 ```bash
-sudo apt update
-sudo apt upgrade -y
+apt update
+apt upgrade -y
 ```
 
-Instale Git, Node.js e npm. Exemplo com NodeSource para Node 20:
+Instale Node.js 20, npm e Git:
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs git
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs git
+```
+
+Confira:
+
+```bash
+node -v
+npm -v
+git --version
 ```
 
 Instale PM2:
 
 ```bash
-sudo npm install -g pm2
+npm install -g pm2
 ```
 
-Crie a pasta persistente dos dados:
+## 5. Criar a pasta persistente dos dados
+
+Mesmo que o repositorio tenha a pasta `src/data`, crie uma pasta separada para os dados de producao:
 
 ```bash
-sudo mkdir -p /var/lib/ativebot
-sudo chown -R "$USER":"$USER" /var/lib/ativebot
+mkdir -p /home/ativebot/data
 ```
 
-## 5. Permitir que a VPS puxe o repositorio
+Por que isso e necessario?
 
-Se o repositorio for publico, voce pode clonar por HTTPS.
+- `src/data/clientes.json` nao deve ir para o GitHub porque contem dados sensiveis.
+- O deploy automatico atualiza a pasta do projeto com `git reset --hard`.
+- Mantendo os dados em `/home/ativebot/data/clientes.json`, eles nao sao apagados nem sobrescritos pelo deploy.
 
-Se for privado, o melhor e criar uma chave SSH na VPS:
+## 6. Migrar seus dados locais existentes
+
+Como voce ja tem dados locais, copie uma vez o arquivo local:
+
+```text
+src/data/clientes.json
+```
+
+para a VPS em:
+
+```text
+/home/ativebot/data/clientes.json
+```
+
+Na sua maquina local, rode:
 
 ```bash
-ssh-keygen -t ed25519 -C "ativebot-vps-deploy" -f ~/.ssh/ativebot_github
+scp src/data/clientes.json root@IP_DA_VPS:/home/ativebot/data/clientes.json
+```
+
+Na VPS, confira se o arquivo chegou:
+
+```bash
+ls -lh /home/ativebot/data/clientes.json
+```
+
+Proteja o arquivo:
+
+```bash
+chmod 600 /home/ativebot/data/clientes.json
+```
+
+## 7. Permitir que a VPS puxe o repositorio do GitHub
+
+Se o repositorio for publico, voce pode clonar por HTTPS e pular a parte da deploy key.
+
+Se o repositorio for privado, crie uma chave SSH na VPS:
+
+```bash
+ssh-keygen -t ed25519 -C "ativebot-vps-github" -f ~/.ssh/ativebot_github
 cat ~/.ssh/ativebot_github.pub
 ```
 
@@ -107,10 +165,10 @@ No GitHub:
 2. Va em `Settings`.
 3. Va em `Deploy keys`.
 4. Clique em `Add deploy key`.
-5. Cole a chave publica mostrada no comando `cat`.
-6. Marque apenas permissao de leitura.
+5. Cole a chave publica exibida pelo comando `cat`.
+6. Deixe permissao somente de leitura.
 
-Configure o SSH da VPS para usar essa chave:
+Configure a VPS para usar essa chave:
 
 ```bash
 nano ~/.ssh/config
@@ -132,15 +190,22 @@ Teste:
 ssh -T git@github.com
 ```
 
-## 6. Clonar o projeto na VPS
+## 8. Clonar o projeto na VPS
 
-Escolha uma pasta para o projeto. Exemplo:
+Use `/home/ativebot/app` para o codigo do projeto:
 
 ```bash
-mkdir -p ~/apps
-cd ~/apps
-git clone git@github.com:SEU_USUARIO/ativebot_discord.git
-cd ativebot_discord
+mkdir -p /home/ativebot/app
+cd /home/ativebot/app
+git clone git@github.com:SEU_USUARIO/ativebot_discord.git .
+```
+
+Se o repositorio for publico e voce preferir HTTPS:
+
+```bash
+mkdir -p /home/ativebot/app
+cd /home/ativebot/app
+git clone https://github.com/SEU_USUARIO/ativebot_discord.git .
 ```
 
 Instale dependencias:
@@ -149,11 +214,12 @@ Instale dependencias:
 npm ci --omit=dev
 ```
 
-## 7. Criar o `.env` na VPS
+## 9. Criar o `.env` na VPS
 
-Na pasta do projeto da VPS:
+Na VPS, dentro do projeto:
 
 ```bash
+cd /home/ativebot/app
 nano .env
 ```
 
@@ -163,48 +229,46 @@ Conteudo:
 DISCORD_TOKEN=seu_token_do_discord
 CLIENT_ID=id_da_aplicacao
 GUILD_ID=id_do_servidor
-CLIENTES_DATA_PATH=/var/lib/ativebot/clientes.json
+CLIENTES_DATA_PATH=/home/ativebot/data/clientes.json
 ```
 
-Importante: esse arquivo nao deve ser enviado ao GitHub.
+Salve o arquivo.
 
-## 8. Migrar dados existentes, se necessario
+Importante: o `.env` fica somente na VPS. Ele nao deve ir para o GitHub.
 
-Se voce ja tem clientes cadastrados neste computador local, copie uma vez o arquivo `src/data/clientes.json` para a VPS.
+## 10. Confirmar a configuracao do PM2
 
-No seu computador local:
+O arquivo `ecosystem.config.cjs` deve apontar para:
 
-```bash
-scp src/data/clientes.json usuario@IP_DA_VPS:/var/lib/ativebot/clientes.json
+```js
+CLIENTES_DATA_PATH: '/home/ativebot/data/clientes.json'
 ```
 
-Depois, na VPS:
+Esse caminho precisa bater com o `.env`.
+
+## 11. Registrar os slash commands do Discord
+
+Na VPS:
 
 ```bash
-chmod 600 /var/lib/ativebot/clientes.json
-```
-
-## 9. Registrar os slash commands do Discord
-
-Na VPS, dentro da pasta do projeto:
-
-```bash
+cd /home/ativebot/app
 npm run deploy
 ```
 
 Esse comando registra os comandos `/cliente-criar`, `/cliente-info`, `/acesso-add` e os demais no servidor configurado em `GUILD_ID`.
 
-## 10. Iniciar o bot com PM2
+## 12. Iniciar o bot com PM2
 
-Na VPS, dentro da pasta do projeto:
+Na VPS:
 
 ```bash
+cd /home/ativebot/app
 pm2 start ecosystem.config.cjs --env production
 pm2 save
 pm2 startup
 ```
 
-O comando `pm2 startup` vai imprimir outro comando com `sudo`. Copie e execute exatamente como ele mostrar.
+O comando `pm2 startup` vai imprimir outro comando. Copie e execute exatamente como ele mostrar.
 
 Confira se esta online:
 
@@ -213,9 +277,11 @@ pm2 status
 pm2 logs ativebot-discord
 ```
 
-## 11. Criar chave SSH para o GitHub Actions acessar a VPS
+## 13. Criar chave SSH para o GitHub Actions acessar a VPS
 
-No seu computador local, crie uma chave separada para o GitHub Actions:
+Na sua maquina local, crie uma chave separada para o GitHub Actions.
+
+No PowerShell, rode:
 
 ```bash
 ssh-keygen -t ed25519 -C "github-actions-ativebot" -f ./github_actions_ativebot
@@ -226,19 +292,47 @@ Isso cria:
 - `github_actions_ativebot`: chave privada.
 - `github_actions_ativebot.pub`: chave publica.
 
-Copie a chave publica para a VPS:
+No Windows, `ssh-copy-id` geralmente nao existe. Entao copie a chave publica manualmente:
+
+```powershell
+type .\github_actions_ativebot.pub
+```
+
+Copie a linha inteira. Ela precisa comecar com `ssh-ed25519` e terminar com `github-actions-ativebot`.
+
+Entre na VPS:
 
 ```bash
-ssh-copy-id -i ./github_actions_ativebot.pub usuario@IP_DA_VPS
+ssh root@IP_DA_VPS
 ```
+
+Na VPS:
+
+```bash
+mkdir -p ~/.ssh
+nano ~/.ssh/authorized_keys
+```
+
+Cole a chave publica no final do arquivo, em uma unica linha. Nao cole a chave privada. Chave publica comeca com `ssh-ed25519`; chave privada comeca com `-----BEGIN OPENSSH PRIVATE KEY-----`.
+
+Depois ajuste permissoes:
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+```
+
+Volte ao PowerShell.
 
 Teste:
 
-```bash
-ssh -i ./github_actions_ativebot usuario@IP_DA_VPS
+```powershell
+ssh -i ./github_actions_ativebot root@IP_DA_VPS
 ```
 
-## 12. Configurar secrets no GitHub
+Se pedir senha, a chave foi recusada. Nesse caso, confira se a linha em `authorized_keys` e exatamente igual ao conteudo de `github_actions_ativebot.pub`, sem `...`, sem quebras de linha e sem caracteres faltando.
+
+## 14. Configurar secrets no GitHub
 
 No GitHub:
 
@@ -253,12 +347,12 @@ Crie estes secrets:
 | Secret | Valor |
 | --- | --- |
 | `VPS_HOST` | IP ou dominio da VPS |
-| `VPS_USER` | usuario SSH da VPS |
-| `VPS_PORT` | porta SSH, geralmente `22` |
-| `VPS_PROJECT_PATH` | caminho do projeto na VPS, ex: `/home/usuario/apps/ativebot_discord` |
-| `VPS_SSH_KEY` | conteudo da chave privada `github_actions_ativebot` |
+| `VPS_USER` | `root` |
+| `VPS_PORT` | `22`, a menos que sua SSH use outra porta |
+| `VPS_PROJECT_PATH` | `/home/ativebot/app` |
+| `VPS_SSH_KEY` | conteudo inteiro da chave privada `github_actions_ativebot` |
 
-Para ver a chave privada:
+Para ver a chave privada local:
 
 ```bash
 cat github_actions_ativebot
@@ -272,9 +366,9 @@ Cole o conteudo inteiro, incluindo:
 -----END OPENSSH PRIVATE KEY-----
 ```
 
-## 13. Como funciona o deploy automatico
+## 15. Como o deploy automatico funciona
 
-O arquivo `.github/workflows/deploy.yml` roda a cada push na branch `main`.
+O workflow `.github/workflows/deploy.yml` roda a cada push na branch `main`.
 
 Ele executa na VPS:
 
@@ -288,11 +382,11 @@ pm2 startOrReload ecosystem.config.cjs --env production
 pm2 save
 ```
 
-Ou seja: atualiza o codigo, reinstala dependencias, registra slash commands e reinicia o bot.
+Como os dados estao em `/home/ativebot/data/clientes.json`, o `git reset --hard` atualiza apenas o codigo em `/home/ativebot/app` e nao mexe nos clientes cadastrados.
 
-## 14. Testar o deploy
+## 16. Testar o deploy automatico
 
-Faca uma alteracao pequena no projeto, por exemplo no README, e envie:
+Na sua maquina local, faca uma alteracao pequena, depois:
 
 ```bash
 git add .
@@ -300,13 +394,13 @@ git commit -m "Test automatic deploy"
 git push
 ```
 
-No GitHub, va em:
+No GitHub, abra:
 
 ```text
 Actions > Deploy VPS
 ```
 
-Abra a execucao e confira se terminou com sucesso.
+Confira se a execucao terminou com sucesso.
 
 Na VPS:
 
@@ -315,12 +409,47 @@ pm2 status
 pm2 logs ativebot-discord
 ```
 
-## 15. Cuidados importantes
+## 17. Checklist final
 
-- Nunca suba `.env` para o GitHub.
-- Nunca suba `src/data/clientes.json` se ele contem clientes, logins ou senhas.
-- Se trocar comandos slash, o workflow ja roda `npm run deploy`.
-- Se o bot parar, veja logs com `pm2 logs ativebot-discord`.
-- Se o deploy falhar no `git fetch`, a VPS provavelmente nao tem acesso ao repositorio.
-- Se o deploy falhar no SSH, revise `VPS_HOST`, `VPS_USER`, `VPS_PORT` e `VPS_SSH_KEY`.
+Antes de considerar pronto:
 
+- O repositorio esta no GitHub.
+- `.env` nao foi enviado ao GitHub.
+- `src/data/clientes.json` nao foi enviado ao GitHub.
+- O arquivo local `src/data/clientes.json` foi copiado para `/home/ativebot/data/clientes.json`.
+- O `.env` da VPS contem `CLIENTES_DATA_PATH=/home/ativebot/data/clientes.json`.
+- O secret `VPS_PROJECT_PATH` no GitHub esta como `/home/ativebot/app`.
+- `pm2 status` mostra `ativebot-discord` online.
+- Um push na branch `main` dispara o workflow `Deploy VPS`.
+
+## 18. Comandos uteis de manutencao
+
+Ver logs:
+
+```bash
+pm2 logs ativebot-discord
+```
+
+Reiniciar manualmente:
+
+```bash
+pm2 restart ativebot-discord
+```
+
+Ver processos:
+
+```bash
+pm2 status
+```
+
+Ver se os dados existem:
+
+```bash
+ls -lh /home/ativebot/data/clientes.json
+```
+
+Fazer backup manual dos dados:
+
+```bash
+cp /home/ativebot/data/clientes.json /home/ativebot/data/clientes.backup.json
+```
