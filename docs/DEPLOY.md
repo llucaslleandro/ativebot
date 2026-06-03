@@ -422,7 +422,7 @@ Antes de considerar pronto:
 - `pm2 status` mostra `ativebot-discord` online.
 - Um push na branch `main` dispara o workflow `Deploy VPS`.
 
-## 18. Comandos uteis de manutencao TESTE
+## 18. Comandos uteis de manutencao 
 
 Ver logs:
 
